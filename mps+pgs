@@ -1,0 +1,22 @@
+################# Script from Rafaella Ormond ################
+# Script in R 
+# Script to made a integrated model with PRS and MRS 
+# in this case we calculate the PRS from PRS-CS and MRS from Pruning-Threshold MRS
+
+
+# -------------------- Load packages --------------------
+library(data.table)
+library(dplyr)
+
+# -------------------- Load data --------------------
+# Assuming your data is in a data.frame or data.table called `df`
+# Columns: ID, phenotype (binary: 0/1), PRS, MRS, covariates (e.g., sex, age, PC1-PC10)
+df <- fread("path/to/integrated_data.txt")
+
+
+# -------------------- Logistic regression models --------------------
+
+# Model 3: Integrated PRS + MRS
+model_integrated <- glm(phenotype ~ PRS + MRS + sex + age + PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10,
+                        data = df, family = binomial)
+
