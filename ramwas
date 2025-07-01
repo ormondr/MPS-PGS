@@ -1,1 +1,256 @@
+################ Script from Rafaella Ormond ###################
+# script adapted from 
+# script in R 
 
+
+library(dplyr)
+
+# files: load the files with the information with the sample, phenotype and covariates
+data <- targets_FEP
+
+library(ramwas)
+
+# First, we obtain methylation estimates using one of many methods available in the minfi package.
+
+# beta = BMIQ(rgSetRaw)
+
+dr = paste0("")
+
+
+# Beta values from my data
+beta <- readRDS("./Betavalues.rds")
+
+# Anotations Library 
+library(filematrix)
+# BiocManager::install("IlluminaHumanMethylationEPICanno.ilm10b2.hg19")
+
+library(IlluminaHumanMethylationEPICanno.ilm10b2.hg19)
+annEPIC <- getAnnotation(IlluminaHumanMethylationEPICanno.ilm10b2.hg19)
+
+##### EPIC #######
+# Extrair cromossomos e posições
+
+# IDs dos probes nas suas amostras (colnames dos betas)
+probes_epic <- rownames(beta)
+
+# Filtrar as anotações de acordo com os probes das suas amostras
+annEPIC_filtered <- annEPIC[rownames(annEPIC) %in% probes_epic, ]
+
+# Extrair os cromossomos e posições correspondentes aos probes filtrados
+chr <- sub("chr", "", annEPIC_filtered$chr)  # Remover o prefixo "chr"
+position <- annEPIC_filtered$pos
+
+# Criar diretório para salvar os arquivos
+dir.create('rw_epic_cc', showWarnings = FALSE)
+dir.create('rw_epic_ap', showWarnings = FALSE)
+
+# Salvar localizações dos CpGs
+locs_epic <- cbind(chr = as.integer(chr), position = position)
+fmloc_epic <- fm.create.from.matrix(
+  filenamebase = paste0("rw_epic_cc/CpG_epic_locations"),
+  mat = locs_epic,
+  size = 4
+)
+close(fmloc_epic)
+
+locs_epic <- cbind(chr = as.integer(chr), position = position)
+fmloc_epic <- fm.create.from.matrix(
+  filenamebase = paste0("rw_epic_ap/CpG_epic_locations"),
+  mat = locs_epic,
+  size = 4
+)
+close(fmloc_epic)
+
+# Salvar os nomes dos cromossomos
+#### aqui eu faço tanto pra caso e controle quanto pra antes e após
+writeLines(con = 'rw_epic_cc/CpG_epic_chromosome_names.txt', text = levels(factor(chr)))
+writeLines(con = 'rw_epic_ap/CpG_epic_chromosome_names.txt', text = levels(factor(chr)))
+
+
+# Salvar as estimativas de metilação (beta values)
+fm_beta_epic <- fm.create.from.matrix(
+  filenamebase = paste0("rw_epic_cc/Coverage"),
+  mat = t(beta_epic_cc)
+)
+close(fm_beta_epic)
+
+fm_beta_epic <- fm.create.from.matrix(
+  filenamebase = paste0("rw_epic_ap/Coverage"),
+  mat = t(beta_epic_ap)
+)
+close(fm_beta_epic)
+
+
+################### Calculando PCs #################################
+####### primeiro transpor a tabela
+beta_epic_cc_t <- t(beta_epic_cc)
+beta_epic_ap_t <- t(beta_epic_ap)
+
+# Calcular a PCA
+pca_result_epic_cc <- prcomp(beta_epic_cc_t, center = TRUE, scale. = TRUE)
+pca_result_epic_ap <- prcomp(beta_epic_ap_t, center = TRUE, scale. = TRUE)
+
+# Resumir os resultados da PCA
+summary(pca_result_epic_cc)
+summary(pca_result_epic_ap)
+
+# Criar um data frame com os resultados da PCA
+pca_data_epic_cc <- data.frame(pca_result_epic_cc$x)
+pca_data_epic_ap <- data.frame(pca_result_epic_ap$x)
+
+# Visualizar os primeiros PCs em um gráfico para epic
+library(ggplot2)
+
+pdf("PCA_epic_cc.pdf")
+ggplot(pca_data_epic_cc, aes(x = PC1, y = PC2)) +
+  geom_point() +
+  labs(title = "PCA of EPIC Methylation Beta Values",
+       x = "Principal Component 1",
+       y = "Principal Component 2") +
+  theme_minimal()
+dev.off() # Fecha o dispositivo gráfico
+
+pdf("PCA_epic_ap.pdf")
+ggplot(pca_data_epic_ap, aes(x = PC1, y = PC2)) +
+  geom_point() +
+  labs(title = "PCA of EPIC Methylation Beta Values",
+       x = "Principal Component 1",
+       y = "Principal Component 2") +
+  theme_minimal()
+dev.off() # Fecha o dispositivo gráfico
+
+# Número de componentes principais a serem usados como covariáveis
+nPCs = 2
+
+# Para os dados EPIC
+covariates.pca_epic_cc = pca_result_epic_cc$x[, 1:nPCs]  # Usar as duas primeiras PCs
+colnames(covariates.pca_epic_cc) = paste0('PC', seq_len(nPCs))
+
+covariates.pca_epic_ap = pca_result_epic_ap$x[, 1:nPCs]  # Usar as duas primeiras PCs
+colnames(covariates.pca_epic_ap) = paste0('PC', seq_len(nPCs))
+
+############ chamar as informacoes de amostra que eu tenho pra epic
+
+#### primeiro mudando o formato dos dados pra ficar um pouco mais parecido com o exemplo 
+
+# Modificar PHENOTYPE no data_cc_epic
+data_cc_epic <- data_cc_epic %>%
+  mutate(PHENOTYPE = ifelse(PHENOTYPE == "FEP", 1, 0))
+
+
+
+######### Criando arquivo de covariantes ######
+rownames(data_cc_epic) <- data_cc_epic$ID
+
+covariates.phe_epic_cc <- data_cc_epic[, c("PHENOTYPE", "SEX","AGE","CHIP_POSITION", "CHIP_NUMBER", "Smoking"))]
+covariates.cel_epic_cc <- data_cc_epic[, c("CD4T", "CD8T", "NK", "Bcell", "Mono", "Neu")]
+
+
+covariates_epic_cc = data.frame(
+  samples = rownames(covariates.pca_epic_cc),
+  #covariates.pca_epic_cc,
+  covariates.cel_epic_cc,
+  covariates.phe_epic_cc)
+
+
+########## epic cc ############
+
+#BiocManager::install("ramwas")
+#install.packages("ramwas")
+#library(ramwas)
+
+param = ramwasParameters(
+  dircoveragenorm = 'rw_epic_cc',
+  covariates = covariates_epic_cc,
+  modelcovariates = NULL,
+  modeloutcome = "PHENOTYPE",
+  modelPCs = 0, bihost = "grch37.ensembl.org",
+    bimart = "ENSEMBL_MART_ENSEMBL",
+    bidataset = "hsapiens_gene_ensembl",
+    biattributes = c("hgnc_symbol","entrezgene_id","strand"),
+    bifilters = list(with_hgnc_trans_name = TRUE),
+mmncpgs = c(5, 10, 50, 100, 200, 500),
+toppvthreshold= 1e-5)
+
+param$modelcovariates = NULL
+param$modelPCs = 0
+
+pfull = parameterPreprocess(param)
+
+ramwas4PCA(param)
+
+eigenvalues = fm.load(paste0(pfull$dirpca, "/eigenvalues"))
+eigenvectors = fm.open (filenamebase = paste0(pfull$dirpca, "/eigenvectors"),
+readonly=TRUE);
+plotPCvalues(eigenvalues)
+plotPCvectors(eigenvectors[,1], 1)
+plotPCvectors(eigenvectors[,2], 2)
+
+close(eigenvectors)
+
+################# tentar caso de erro 
+library(pander)
+tblcr = read.table(
+            file = paste0(pfull$dirpca, "/PC_vs_covs_corr.txt"),
+            header = TRUE,
+            sep = "\t")
+pander(head(tblcr, 3))
+
+tblpv = read.table(
+            file = paste0(pfull$dirpca, "/PC_vs_covs_pvalue.txt"),
+            header = TRUE,
+            sep = "\t")
+pander(head(tblpv, 3))
+################
+
+ramwas5MWAS(param)
+png("QQ_plot_epic_cc.png")  # Mude o nome do arquivo conforme necessário
+qqPlotFast(getMWAS(param)$`p-value`)
+title('QQ-plot\n13 covariates ')  # Substituindo hífen longo por hífen normal
+dev.off() 
+
+param$modelcovariates = c(
+  "AGE", "SEX", "CHIP_NUMBER", "CHIP_POSITION", "Smoking",
+  #"PC1", "PC2",
+  "CD4T", "CD8T", "NK", "Bcell", "Mono", "Neu")
+param$modelPCs = 2
+ramwas4PCA(param)
+ramwas5MWAS(param)
+qqPlotFast(getMWAS(param)$`p-value`)
+title('QQ-plot covariates, 2 pcs')
+
+
+
+mwas = getMWASandLocations(param)
+layout(matrix(c(1,2), 1, 2, byrow = TRUE), widths=c(1,2.2))
+qqPlotFast(mwas$`p-value`)
+man = manPlotPrepare(
+        pvalues = mwas$`p-value`,
+        chr = mwas$chr,
+        pos = mwas$start,
+        chrmargins = 0)
+manPlotFast(man)
+
+ramwas6annotateTopFindings(param)
+
+ramwas7riskScoreCV(param)
+
+cv = readRDS(paste0(pfull$dircv, "/rds/CpGs=000050_alpha=0.000000.rds"))
+plotPrediction(
+        param = pfull,
+        outcome = cv$outcome,
+        forecast = cv$forecast,
+        cpgs2use = 50,
+        main = "Prediction success (EN on coverage)")
+
+cl = readRDS(sprintf("%s/rds/cor_data_alpha=%f.rds",
+                    pfull$dircv,
+                    pfull$mmalpha))
+plotCVcors(cl, pfull)
+
+
+
+########## tive que mudar algumas coisas aqui ##########
+pfull2 = pfull
+pfull$dircv = "path/CV_10_folds/"
+cv = readRDS(paste0(pfull$dircv, "/rds/CpGs=000050_alpha=0.000000.rds"))
