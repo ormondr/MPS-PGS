@@ -1,0 +1,110 @@
+################################# Script from Rafaella Ormond ######################################################
+# adapted from https://github.com/jche453/Pruning-Thresholding-MRS
+
+#####################################
+##############STEP ONE###############
+#####################################
+
+#####################################
+# Load DNA methylation (beta) file
+betas <- load("betafiles.RData")
+# Transposing the file
+betas = data.frame(t(betas))
+betas$ID = rownames(betas)  
+
+##########################################################
+###Run cmr function to generate Co-methylation regions####
+##########################################################
+### Generate co-methylated regions ###
+# install.packages("comeback_0.1.0.tar.gz", repos = NULL, type="source")
+#comeback_0.1.0.tar.gz can be found at https://bitbucket.org/flopflip/comeback.
+library(comeback)
+source("MRS_func.R")
+
+load("betas_test.RData")
+res = t(res) #column are CpG sites, rows are for samples
+cmrs <- cmr(Mdata = res, corlo = 0.3)
+#cmrs is the output from cmr(), and saved all the co-methylation regions in a list
+save(cmrs, file="CMR.test.RData")
+
+
+# To generate Co-methylation regions dataframe for later analysis, 
+# you can either input cmrs calculated from your own dataset,
+CoMeRegion = GenCoMeRegion(cmrs = cmrs, beta = res, Overlap = F)
+
+#CoMeRegion is a matrix that assigned a unique number to each co-methylation region
+save(CoMeRegion, file = "CoMeRegion.rda")
+
+#####################################
+##############STEP TWO###############
+#####################################
+### Calculate MRS
+library(dplyr)    
+library(robustHD)
+
+# Load real phenotype and methylation data
+DNAm = get(load("betas_test.RData"))
+DNAm = t(DNAm)
+DNAm[1:6,1:6] #check DNAm file
+
+###Load smoking summary statistics from discovery dataset
+SS_newborn <- read.csv("SmokingSS_Adults_CHARGE.csv")
+#The summary statistics file should have at least four columns: CpGs names, beta coefficient, 
+#standand errors and p-values
+SS = SS_newborn[,c(1,2,3,4)]
+#change the columns according to your dataset, 1st: CpGs, 2nd: coefficients, 3rd: SE and 4th: p-value
+#Rename the column names as "Marker", "BETA" and "Pvalue"
+colnames(SS) = c("Marker", "BETA", "SE", "Pvalue")
+head(SS)
+#      Marker    BETA    SE Pvalue
+#1 cg05575921 -0.1 1  1.00e-2
+#2 cg12803068  0.1 1  1.00e-2
+#3 cg04180046  0.1 1  1.00e-2
+#4 cg09935388 -0.1 1  1.00e-2
+#5 cg25949550 -0.1 1  1.00e-2
+#6 cg12876356 -0.1 1  1.00e-2
+
+#Get the smallest p-value
+minpvalue = min(SS$Pvalue[SS$Pvalue != 0])
+minpvalue = sapply(strsplit(as.character(minpvalue), "-"), "[", 2)
+###Load Co-methylation regions for newborns -> CoMeRegion
+load("CoMeRegion.rda")
+#Specify how p-value threshold, for example, if you want 5 * 10 ^ (-2), specify pthread to be 2
+Pthred = 2:minpvalue
+MRS = GenMRS(DNAm, SS, Pthred, CoMeRegion, CoMeBack = T, weightSE = F)
+#if weightSE = T, weights = BETA/SE, where BETA is the effect size
+#Basic information of MRS
+write.csv(MRS$pvalueinfo, "MRS_pvalueinfo.csv", row.names = F)
+write.csv(MRS$MRS, "MRS.csv", row.names = F)
+
+#####################################
+##############STEP THREE#############
+#####################################
+#Read MRS file
+MRS = read.csv("MRS.csv")
+
+#Compare prediction performance of MRS and select the optimized MRS
+#Load phenotype
+pheno = read.csv("pheno.csv")
+pheno = pheno[,c("ID","pheno")] 
+head(pheno)
+#pheno needs to have at least one column called "ID" that matches beta file's rownames, 
+#and another column called "pheno" for phenotype (e.g. prenatal smoking)
+colnames(pheno) = c("ID", "pheno")
+#Merge MRS data and Phenotype data
+MRS_Pheno = merge(MRS, pheno, by = "ID")
+
+#Prediction performance of all MRS would be saved in CorResults
+CorResults = matrix(NA, ncol(MRS)-1, 1)
+rownames(CorResults) = colnames(MRS)[-1]
+for (j in 2:ncol(MRS)){
+  CorResults[(j-1),1] = cor(MRS_Pheno[,j], MRS_Pheno$pheno, use = "complete")^2
+}
+CorResults = data.frame(CorResults)
+colnames(CorResults) = "R2"
+#Maximum prediction
+max(CorResults)
+#P-value threshold that leads to maximum prediction
+MaxPNumber = which(CorResults == max(CorResults))
+MaxPNumber
+rownames(CorResults)[MaxPNumber] #"P5e-23" and "P5e-22"
